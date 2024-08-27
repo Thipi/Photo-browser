@@ -1,21 +1,21 @@
 <template>
   <div>
     <h1>Photo Browser</h1>
-    <div ref="photoContainer" class="photo-container" @scroll.passive="handleScroll">
-        <div
-            v-for="(photo, index) in visiblePhotos"
-            :key="photo.id"
-            class="photo-thumbnail"
-            tabindex="0"
-            role="button"
-            @click="openModal(photo)"
-            @keydown.enter="openModal(photo)"
-            @keydown.space.prevent="openModal(photo)"
-            aria-label="View details of photo {{ index + 1 }}"
-          >
-            <div class="photo-number">{{ getPhotoNumber(index) }}</div>
-            <img :src="photo.thumbnailUrl" :alt="photo.title" />
-        </div>
+    <div ref="photoContainer" class="photo-container" @scroll.passive="debouncedHandleScroll">
+      <div
+        v-for="(photo, index) in visiblePhotos"
+        :key="photo.id"
+        class="photo-thumbnail"
+        tabindex="0"
+        role="button"
+        @click="openModal(photo)"
+        @keydown.enter="openModal(photo)"
+        @keydown.space.prevent="openModal(photo)"
+        aria-label="View details of photo {{ getPhotoNumber(index) }}"
+      >
+        <div class="photo-number">{{ getPhotoNumber(index) }}</div>
+        <img :src="photo.thumbnailUrl" :alt="photo.title" />
+      </div>
       <div v-if="loading || isLoadingMore || isLoadingPrevious" class="loading">Loading...</div>
     </div>
 
@@ -45,8 +45,8 @@ export default {
       isModalVisible: false,
       selectedPhoto: null,
       loading: false,
-      maxPhotos: 42,
-      photosPerPage: 24,
+      maxPhotos: 15,
+      photosPerPage: 15,
       isLoadingMore: false,
       isLoadingPrevious: false,
     };
@@ -56,7 +56,6 @@ export default {
     this.loadInitialPhotos();
   },
   methods: {
-    /*Modal methods for viewing detailed popup of the photo*/
     openModal(photo) {
       this.selectedPhoto = photo;
       this.isModalVisible = true;
@@ -68,16 +67,16 @@ export default {
     async loadInitialPhotos() {
       this.loading = true;
       try {
-        const response = await getPhotos(1, this.photosPerPage);
+        const response = await getPhotos(this.currentPage, this.photosPerPage);
         this.photos = response.data;
-        this.visiblePhotos = this.photos.slice(0, this.maxPhotos);
+        this.updateVisiblePhotos();
       } catch (error) {
         console.error("Failed to load initial photos:", error);
       } finally {
         this.loading = false;
       }
     },
-    //Loading with async method more photos when scrolling down
+    //When scrolling down load more photos (remove/hide the previous photos for optimization)
     async loadMorePhotos() {
       if (this.isLoadingMore) return;
 
@@ -85,47 +84,53 @@ export default {
       try {
         const response = await getPhotos(this.currentPage + 1, this.photosPerPage);
         this.photos = [...this.photos, ...response.data];
-        this.visiblePhotos = this.photos.slice(0, this.maxPhotos);
         this.currentPage++;
+        this.updateVisiblePhotos();
       } catch (error) {
         console.error("Failed to load more photos:", error);
       } finally {
         this.isLoadingMore = false;
       }
     },
+    //After scrolling down at least once
     async loadPreviousPhotos() {
       if (this.isLoadingPrevious || this.currentPage <= 1) return;
 
       this.isLoadingPrevious = true;
-      this.currentPage--;
       try {
-        const response = await getPhotos(this.currentPage, this.photosPerPage);
+        const response = await getPhotos(this.currentPage - 1, this.photosPerPage);
         this.photos = [...response.data, ...this.photos];
-        this.visiblePhotos = this.photos.slice(0, this.maxPhotos);
-      } 
-      catch (error) {
+        this.currentPage--;
+        this.updateVisiblePhotos();
+      } catch (error) {
         console.error("Failed to load previous photos:", error);
-      } 
-      finally {
+      } finally {
         this.isLoadingPrevious = false;
       }
     },
-    handleScroll() { //We want to load more photos as we scroll down without any clicks
+    //Remove photos that are not visible.
+    updateVisiblePhotos() {
+      const startIndex = (this.currentPage - 1) * this.photosPerPage;
+      this.visiblePhotos = this.photos.slice(startIndex, startIndex + this.maxPhotos);
+    },
+    handleScroll() {
       const container = this.$refs.photoContainer;
-      const scrollTop = container.scrollTop; //Are we scrolling to top?
-      const scrollBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 10; //Or are we scrolling to bottom.
+      if (!container) return;
 
-      if (scrollBottom && !this.loading) {
+      const scrollTop = container.scrollTop;
+      const scrollBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 10;
+
+      if (scrollBottom && !this.isLoadingMore) {
         this.loadMorePhotos();
-      } else if (scrollTop === 0 && this.currentPage > 1) {
+      } else if (scrollTop === 0 && this.currentPage > 1 && !this.isLoadingPrevious) {
         this.loadPreviousPhotos();
       }
     },
     debouncedHandleScroll() {
       this.debouncedHandleScroll();
     },
-    getPhotoNumber(index) { //Displaying the number of the photo, so we know where we are as in the demo the color don't tell much :D
-      return (this.currentPage - 1) * 20 + index + 1;
+    getPhotoNumber(index) {
+      return (this.currentPage - 1) * this.photosPerPage + index + 1;
     },
   },
 };
@@ -165,7 +170,13 @@ export default {
   font-size: 12px;
 }
 
-/* Responsive adjustments */
+.loading {
+  text-align: center;
+  color: rgb(15, 49, 46);
+  margin: 20px 0;
+}
+
+/* Responsiveness */
 @media (max-width: 1200px) {
   .photo-container {
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -183,11 +194,5 @@ export default {
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     padding: 5px;
   }
-}
-
-.loading {
-  text-align: center;
-  color: rgb(15, 49, 46);;
-  margin: 20px 0;
 }
 </style>
